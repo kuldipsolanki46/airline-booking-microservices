@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 
+import jakarta.validation.Valid;
+
 import java.util.List;
 
 
@@ -40,13 +42,13 @@ public class FlightController {
 
     //for post requests, we can use @PostMapping
     @PostMapping
-    public FlightResponse createFlight(@RequestBody FlightRequest flightRequest) {
+    public FlightResponse createFlight(@Valid @RequestBody FlightRequest flightRequest) {
         return flightService.createFlight(flightRequest);
     }
 
     //for put requests, we can use @PutMapping
     @PutMapping("/{id}")
-    public FlightResponse updateFlight(@PathVariable Long id, @RequestBody FlightRequest flightRequest) {
+    public FlightResponse updateFlight(@PathVariable Long id, @Valid @RequestBody FlightRequest flightRequest) {
         return flightService.updateFlight(id, flightRequest);
     }
 

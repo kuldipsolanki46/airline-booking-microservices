@@ -53,6 +53,15 @@ public class FlightService {
         return flightResponse;
     }
 
+    private void validateFlightTimes(FlightRequest flightRequest) {
+        if (!flightRequest.getDeparture()
+                .isBefore(flightRequest.getArrival())) {
+            throw new IllegalArgumentException(
+                    "Departure must be before arrival"
+            );
+        }
+    }
+
     public List<FlightResponse> getAllFlights() {
         return flightRepository.findAll()
                 .stream()
@@ -68,6 +77,8 @@ public class FlightService {
     }
 
     public FlightResponse createFlight(FlightRequest flightRequest) {
+        validateFlightTimes(flightRequest);
+
         Flight flight = flightBuild(flightRequest);
         flight.setAvailableSeats(flight.getTotalSeats());
 
@@ -77,6 +88,8 @@ public class FlightService {
     }
 
     public FlightResponse updateFlight(Long id, FlightRequest flightRequest) {
+        validateFlightTimes(flightRequest);
+
         Flight existingFlight = flightRepository.findById(id).orElse(null);
         if (existingFlight != null) {
             existingFlight.setFlightNumber(flightRequest.getFlightNumber());
