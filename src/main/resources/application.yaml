@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: flightservice
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/airline_flight_db
+    username: airline_user
+    password: ${DB_PASSWORD:airline_dev_123}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+
+server:
+    port: 8080
