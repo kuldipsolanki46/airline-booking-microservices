@@ -3,29 +3,44 @@ package com.airline.flightservice.service;
 import com.airline.flightservice.dto.FlightRequest;
 import com.airline.flightservice.dto.FlightResponse;
 import com.airline.flightservice.entity.Flight;
+import com.airline.flightservice.exception.DuplicateFlightException;
+import com.airline.flightservice.exception.FlightNotFoundException;
 import com.airline.flightservice.repository.FlightRepository;
 
 import java.util.List;
+import java.util.Objects;
 
 
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 
-
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.PageRequest;
 
 
 @Service
 public class FlightService {
     private final FlightRepository flightRepository;
 
-    FlightService(FlightRepository flightRepository) {
+    public FlightService(FlightRepository flightRepository) {
         this.flightRepository = flightRepository;
+    }
+
+    private String normalizeLocation(String location) {
+        return location.trim().toLowerCase();
+    }
+
+    private String normalizeFlightNumber(String flightNumber) {
+        return flightNumber.trim().toUpperCase();
     }
 
     private Flight flightBuild (FlightRequest flightRequest) {
         Flight flight = Flight.builder()
-                .flightNumber(flightRequest.getFlightNumber())
-                .source(flightRequest.getSource())
-                .destination(flightRequest.getDestination())
+                .flightNumber(normalizeFlightNumber(flightRequest.getFlightNumber()))
+                .source(normalizeLocation(flightRequest.getSource()))
+                .destination(normalizeLocation(flightRequest.getDestination()))
                 .departure(flightRequest.getDeparture())
                 .arrival(flightRequest.getArrival())
                 .totalSeats(flightRequest.getTotalSeats())
@@ -53,31 +68,38 @@ public class FlightService {
         return flightResponse;
     }
 
-    private void validateFlightTimes(FlightRequest flightRequest) {
-        if (!flightRequest.getDeparture()
-                .isBefore(flightRequest.getArrival())) {
-            throw new IllegalArgumentException(
-                    "Departure must be before arrival"
-            );
+    private void validateFlightRequest(FlightRequest request) {
+
+        if (!request.getDeparture().isBefore(request.getArrival())) {
+            throw new IllegalArgumentException("Departure must be before arrival");
+        }
+
+        if (normalizeLocation(request.getSource()).equals(normalizeLocation(request.getDestination()))) {
+
+            throw new IllegalArgumentException("Source and destination cannot be the same");
         }
     }
 
-    public List<FlightResponse> getAllFlights() {
-        return flightRepository.findAll()
-                .stream()
-                .map(this::responseBuild)
-                .toList();
+    public Page<FlightResponse> getAllFlights(Pageable pageable) {
+        return flightRepository.findAll(pageable)
+                .map(this::responseBuild);
     }
 
     public FlightResponse getFlightById(Long id) {
         Flight flight = flightRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Flight not found"));
+                .orElseThrow(() -> new FlightNotFoundException(id));
 
         return responseBuild(flight);
     }
 
     public FlightResponse createFlight(FlightRequest flightRequest) {
-        validateFlightTimes(flightRequest);
+        validateFlightRequest(flightRequest);
+
+        String flightNumber = normalizeFlightNumber(flightRequest.getFlightNumber());
+
+        if (flightRepository.existsByFlightNumber((flightNumber))) {
+            throw new DuplicateFlightException(flightNumber);
+        }
 
         Flight flight = flightBuild(flightRequest);
         flight.setAvailableSeats(flight.getTotalSeats());
@@ -87,34 +109,64 @@ public class FlightService {
         return responseBuild(flight);
     }
 
+    @Transactional
     public FlightResponse updateFlight(Long id, FlightRequest flightRequest) {
-        validateFlightTimes(flightRequest);
+        validateFlightRequest(flightRequest);
 
-        Flight existingFlight = flightRepository.findById(id).orElse(null);
-        if (existingFlight != null) {
-            existingFlight.setFlightNumber(flightRequest.getFlightNumber());
-            existingFlight.setSource(flightRequest.getSource());
-            existingFlight.setDestination(flightRequest.getDestination());
-            existingFlight.setDeparture(flightRequest.getDeparture());
-            existingFlight.setArrival(flightRequest.getArrival());
-            existingFlight.setTotalSeats(flightRequest.getTotalSeats());
-            existingFlight.setPrice(flightRequest.getPrice());
-            existingFlight.setUpdatedAt(java.time.LocalDateTime.now());
-            flightRepository.save(existingFlight);
 
-            return responseBuild(existingFlight);
+        Flight existingFlight = flightRepository.findById(id).orElseThrow(() -> new FlightNotFoundException(id));
+        String flightNumber = normalizeFlightNumber(flightRequest.getFlightNumber());
+
+        if (flightRepository.existsByFlightNumberAndIdNot((flightNumber), id)) {
+            throw new DuplicateFlightException(flightNumber);
         }
-        throw new RuntimeException("Flight not found");
+
+        int bookedSeats = existingFlight.getTotalSeats()
+                - existingFlight.getAvailableSeats();
+
+        if (bookedSeats > 0) {
+            boolean routeChanged = !Objects.equals(existingFlight.getSource(), normalizeLocation(flightRequest.getSource())) ||
+                                    !Objects.equals(existingFlight.getDestination(), normalizeLocation(flightRequest.getDestination()));
+            if (routeChanged) {
+                throw new IllegalArgumentException( "Cannot change flight route when bookings exist");
+            }
+        }
+
+        if (flightRequest.getTotalSeats() < bookedSeats) {
+            throw new IllegalArgumentException("Total seats cannot be less than booked seats");
+        }
+
+        boolean scheduleChanged = !Objects.equals(existingFlight.getDeparture(), flightRequest.getDeparture()) ||
+                                    !Objects.equals(existingFlight.getArrival(), flightRequest.getArrival());
+
+        if (bookedSeats > 0 && scheduleChanged) {
+            throw new IllegalArgumentException("Cannot change flight schedule when bookings exist");
+        }
+
+        existingFlight.setFlightNumber(flightNumber);
+        existingFlight.setSource(normalizeLocation(flightRequest.getSource()));
+        existingFlight.setDestination(normalizeLocation(flightRequest.getDestination()));
+        existingFlight.setDeparture(flightRequest.getDeparture());
+        existingFlight.setArrival(flightRequest.getArrival());
+        existingFlight.setTotalSeats(flightRequest.getTotalSeats());
+        existingFlight.setAvailableSeats(flightRequest.getTotalSeats() - bookedSeats);
+        existingFlight.setPrice(flightRequest.getPrice());
+
+//        flightRepository.save(existingFlight);
+        // No need to explicitly save the existingFlight here because the @Transactional annotation ensures that changes to the managed entity are automatically persisted when the transaction commits.
+
+        return responseBuild(existingFlight);
     }
 
     public void deleteFlight(Long id) {
         Flight flight = flightRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Flight not found"));
+                .orElseThrow(() -> new FlightNotFoundException(id));
 
         flightRepository.delete(flight);
     }
+
     public List<FlightResponse> searchFlights(String source, String destination) {
-        List<Flight> flights = flightRepository.findBySourceAndDestination(source, destination);
+        List<Flight> flights = flightRepository.findBySourceAndDestination(normalizeLocation(source), normalizeLocation(destination));
         List<FlightResponse> flightResponses = flights.stream()
                 .map(this::responseBuild)
                 .toList();
@@ -130,10 +182,8 @@ public class FlightService {
     }
 
     public int getAvailableSeats(Long id) {
-        Flight flight = flightRepository.findById(id).orElse(null);
-        if (flight != null) {
-            return flight.getAvailableSeats();
-        }
-        throw new RuntimeException("Flight not found");
+        Flight flight = flightRepository.findById(id).orElseThrow(() -> new FlightNotFoundException(id));
+
+        return flight.getAvailableSeats();
     }
 }

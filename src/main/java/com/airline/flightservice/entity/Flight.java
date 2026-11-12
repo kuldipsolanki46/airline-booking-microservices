@@ -1,10 +1,6 @@
 package com.airline.flightservice.entity;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Column;
+import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -24,6 +20,9 @@ import lombok.AllArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
+@Table(name = "flights", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_flightNumber", columnNames = "flightNumber")
+})
 public class Flight {
 
 
@@ -31,24 +30,39 @@ public class Flight {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Version
+    private Long version;
+
+    @Column(name = "flightNumber", nullable = false)
     private String flightNumber;
 
+    @Column(nullable = false, length = 100)
     private String source;
+
+    @Column(nullable = false, length = 100)
     private String destination;
 
+    @Column(nullable = false)
     private LocalDateTime departure;
+
+    @Column(nullable = false)
     private LocalDateTime arrival;
 
+    @Column(nullable = false)
     private int totalSeats;
+
+    @Column(nullable = false)
     private int availableSeats;
 
-    @Column(precision = 10, scale = 2)
+    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal price;
 
     @CreationTimestamp
+    @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @UpdateTimestamp
+    @Column(nullable = false)
     private LocalDateTime updatedAt;
 
 }

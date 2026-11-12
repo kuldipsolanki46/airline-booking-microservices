@@ -3,11 +3,7 @@ package com.airline.flightservice.dto;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
-import jakarta.validation.constraints.PositiveOrZero;
-import jakarta.validation.constraints.Future;
+import jakarta.validation.constraints.*;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -22,11 +18,15 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class FlightRequest {
     @NotBlank(message = "Flight number is required")
+    @Size(max = 20, message = "Flight number cannot exceed 20 characters")
     private String flightNumber;
 
     @NotBlank(message = "Source is required")
+    @Size(max = 100, message = "Source cannot exceed 100 characters")
     private String source;
+
     @NotBlank(message = "Destination is required")
+    @Size(max = 100, message = "Destination cannot exceed 100 characters")
     private String destination;
 
     @NotNull(message = "Departure time is required")
