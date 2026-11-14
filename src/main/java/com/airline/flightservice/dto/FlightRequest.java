@@ -42,6 +42,6 @@ public class FlightRequest {
     private Integer totalSeats;
 
     @NotNull(message = "Price is required")
-    @PositiveOrZero(message = "Price cannot be negative")
+    @Positive(message = "Price must be greater than zero")
     private BigDecimal price;
 }

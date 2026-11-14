@@ -21,7 +21,7 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 @Entity
 @Table(name = "flights", uniqueConstraints = {
-        @UniqueConstraint(name = "uk_flightNumber", columnNames = "flightNumber")
+        @UniqueConstraint(name = "uk_flightNumber", columnNames = "flight_number")
 })
 public class Flight {
 
@@ -33,7 +33,7 @@ public class Flight {
     @Version
     private Long version;
 
-    @Column(name = "flightNumber", nullable = false)
+    @Column(name = "flight_number", nullable = false, length = 20)
     private String flightNumber;
 
     @Column(nullable = false, length = 100)

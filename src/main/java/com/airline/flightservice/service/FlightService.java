@@ -80,6 +80,9 @@ public class FlightService {
         }
     }
 
+
+
+
     public Page<FlightResponse> getAllFlights(Pageable pageable) {
         return flightRepository.findAll(pageable)
                 .map(this::responseBuild);
@@ -104,9 +107,7 @@ public class FlightService {
         Flight flight = flightBuild(flightRequest);
         flight.setAvailableSeats(flight.getTotalSeats());
 
-        flightRepository.save(flight);
-
-        return responseBuild(flight);
+        return responseBuild(flightRepository.save(flight));
     }
 
     @Transactional
