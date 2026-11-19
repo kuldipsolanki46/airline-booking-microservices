@@ -1,6 +1,5 @@
 package com.airline.flightservice.service;
 
-
 import com.airline.flightservice.dto.FlightRequest;
 import com.airline.flightservice.dto.FlightResponse;
 import com.airline.flightservice.entity.Flight;
@@ -9,6 +8,7 @@ import com.airline.flightservice.exception.FlightNotFoundException;
 import com.airline.flightservice.repository.FlightRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -22,7 +22,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class FlightServiceTest {
+class FlightServiceTest {
+
+    // Shared timestamps avoid accidental differences between test fixtures.
+    private static final LocalDateTime DEPARTURE = LocalDateTime.now().plusDays(3).withNano(0);
+    private static final LocalDateTime ARRIVAL = DEPARTURE.plusHours(2);
 
     @Mock
     private FlightRepository flightRepository;
@@ -30,245 +34,185 @@ public class FlightServiceTest {
     @InjectMocks
     private FlightService flightService;
 
-
-    // Helper method to create valid requests
     private FlightRequest createValidRequest() {
-
         return FlightRequest.builder()
                 .flightNumber("AI202")
                 .source("Delhi")
                 .destination("Mumbai")
-                .departure(LocalDateTime.now().plusDays(2))
-                .arrival(LocalDateTime.now().plusDays(2).plusHours(2))
+                .departure(DEPARTURE)
+                .arrival(ARRIVAL)
                 .totalSeats(100)
                 .price(new BigDecimal("5000.00"))
                 .build();
     }
 
-
-    // Helper method to create an existing flight
     private Flight createExistingFlight() {
-
         return Flight.builder()
                 .id(1L)
                 .flightNumber("AI202")
                 .source("delhi")
                 .destination("mumbai")
-                .departure(LocalDateTime.now().plusDays(2))
-                .arrival(LocalDateTime.now().plusDays(2).plusHours(2))
+                .departure(DEPARTURE)
+                .arrival(ARRIVAL)
                 .totalSeats(100)
-                .availableSeats(70)
+                .availableSeats(70) // 30 seats already booked
                 .price(new BigDecimal("5000.00"))
                 .build();
     }
 
-
-    // 1. Create flight successfully
     @Test
     void shouldCreateFlightSuccessfully() {
-
+        // Arrange
         FlightRequest request = createValidRequest();
+        when(flightRepository.save(any(Flight.class))).thenAnswer(invocation -> {
+            Flight flight = invocation.getArgument(0);
+            flight.setId(1L);
+            return flight;
+        });
 
-        when(flightRepository.existsByFlightNumber("AI202"))
-                .thenReturn(false);
-
-        when(flightRepository.save(any(Flight.class)))
-                .thenAnswer(invocation -> {
-                    Flight flight = invocation.getArgument(0);
-                    flight.setId(1L);
-                    return flight;
-                });
-
+        // Act
         FlightResponse response = flightService.createFlight(request);
 
-        assertNotNull(response);
-        assertEquals(1L, response.getId());
-        assertEquals("AI202", response.getFlightNumber());
-        assertEquals(100, response.getTotalSeats());
-        assertEquals(100, response.getAvailableSeats());
-
-        verify(flightRepository).save(any(Flight.class));
-    }
-
-
-    // 2. Reject duplicate flight number
-    @Test
-    void shouldRejectDuplicateFlightNumber() {
-
-        FlightRequest request = createValidRequest();
-
-        when(flightRepository.existsByFlightNumber("AI202"))
-                .thenReturn(true);
-
-        assertThrows(
-                DuplicateFlightException.class,
-                () -> flightService.createFlight(request)
+        // Assert: output and data sent to the repository
+        assertAll(
+                () -> assertNotNull(response),
+                () -> assertEquals(1L, response.getId()),
+                () -> assertEquals("AI202", response.getFlightNumber()),
+                () -> assertEquals(100, response.getTotalSeats()),
+                () -> assertEquals(100, response.getAvailableSeats())
         );
 
+        ArgumentCaptor<Flight> savedFlight = ArgumentCaptor.forClass(Flight.class);
+        verify(flightRepository).existsByFlightNumber("AI202");
+        verify(flightRepository).save(savedFlight.capture());
+        assertEquals("AI202", savedFlight.getValue().getFlightNumber());
+        assertEquals(DEPARTURE, savedFlight.getValue().getDeparture());
+        assertEquals(100, savedFlight.getValue().getAvailableSeats());
+    }
+
+    @Test
+    void shouldRejectDuplicateFlightNumber() {
+        FlightRequest request = createValidRequest();
+        when(flightRepository.existsByFlightNumber("AI202")).thenReturn(true);
+
+        assertThrows(DuplicateFlightException.class,
+                () -> flightService.createFlight(request));
+
+        verify(flightRepository).existsByFlightNumber("AI202");
         verify(flightRepository, never()).save(any(Flight.class));
     }
 
-
-    // 3. Throw exception for nonexistent flight
     @Test
     void shouldThrowExceptionWhenFlightDoesNotExist() {
+        when(flightRepository.findById(99L)).thenReturn(Optional.empty());
 
-        when(flightRepository.findById(99L))
-                .thenReturn(Optional.empty());
+        assertThrows(FlightNotFoundException.class,
+                () -> flightService.getFlightById(99L));
 
-        assertThrows(
-                FlightNotFoundException.class,
-                () -> flightService.getFlightById(99L)
-        );
+        verify(flightRepository).findById(99L);
     }
 
+    @Test
+    void shouldThrowExceptionWhenUpdatingMissingFlight() {
+        when(flightRepository.findById(99L)).thenReturn(Optional.empty());
 
-    // 4. Update total seats while preserving booked seats
+        assertThrows(FlightNotFoundException.class,
+                () -> flightService.updateFlight(99L, createValidRequest()));
+
+        verify(flightRepository).findById(99L);
+        verify(flightRepository, never()).save(any(Flight.class));
+    }
+
     @Test
     void shouldUpdateTotalSeatsAndPreserveBookedSeats() {
-
         Flight existingFlight = createExistingFlight();
-
         FlightRequest request = createValidRequest();
+        request.setTotalSeats(120); // Only the capacity changes.
 
-        // Keep the existing schedule unchanged
-        request.setDeparture(existingFlight.getDeparture());
-        request.setArrival(existingFlight.getArrival());
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(existingFlight));
 
-        request.setTotalSeats(120);
-
-        when(flightRepository.findById(1L))
-                .thenReturn(Optional.of(existingFlight));
-
-        when(flightRepository.existsByFlightNumberAndIdNot("AI202", 1L))
-                .thenReturn(false);
-
-        FlightResponse response =
-                flightService.updateFlight(1L, request);
+        FlightResponse response = flightService.updateFlight(1L, request);
 
         assertEquals(120, response.getTotalSeats());
-        assertEquals(90, response.getAvailableSeats());
+        assertEquals(90, response.getAvailableSeats()); // 120 - 30 booked
+        verify(flightRepository).findById(1L);
     }
 
-
-    // 5. Reject reducing total seats below booked seats
     @Test
     void shouldRejectReducingTotalSeatsBelowBookedSeats() {
-
         Flight existingFlight = createExistingFlight();
-
-        // 30 seats are already booked
-
         FlightRequest request = createValidRequest();
-        request.setTotalSeats(20);
+        request.setTotalSeats(20); // Only capacity changes: 20 < 30 booked.
 
-        when(flightRepository.findById(1L))
-                .thenReturn(Optional.of(existingFlight));
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(existingFlight));
 
-        when(flightRepository.existsByFlightNumberAndIdNot("AI202", 1L))
-                .thenReturn(false);
-
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> flightService.updateFlight(1L, request)
-        );
+        assertThrows(IllegalArgumentException.class,
+                () -> flightService.updateFlight(1L, request));
+        verify(flightRepository, never()).save(any(Flight.class));
     }
 
-
-    // 6. Reject route changes when bookings exist
     @Test
     void shouldRejectRouteChangeWhenBookingsExist() {
-
         Flight existingFlight = createExistingFlight();
-
-        // Existing flight has 30 booked seats
-
         FlightRequest request = createValidRequest();
         request.setSource("Bangalore");
         request.setDestination("Chennai");
 
-        when(flightRepository.findById(1L))
-                .thenReturn(Optional.of(existingFlight));
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(existingFlight));
 
-        when(flightRepository.existsByFlightNumberAndIdNot("AI202", 1L))
-                .thenReturn(false);
-
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> flightService.updateFlight(1L, request)
-        );
+        assertThrows(IllegalArgumentException.class,
+                () -> flightService.updateFlight(1L, request));
+        verify(flightRepository, never()).save(any(Flight.class));
     }
 
-
-    // 7. Reject invalid departure and arrival times
     @Test
     void shouldRejectInvalidDepartureAndArrivalTimes() {
-
         FlightRequest request = createValidRequest();
+        request.setArrival(DEPARTURE.minusHours(1));
 
-        // Arrival is before departure
-        request.setArrival(request.getDeparture().minusHours(1));
-
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> flightService.createFlight(request)
-        );
-
+        assertThrows(IllegalArgumentException.class,
+                () -> flightService.createFlight(request));
         verify(flightRepository, never()).save(any(Flight.class));
     }
 
     @Test
     void shouldNormalizeFlightDetailsWhenCreatingFlight() {
-
         FlightRequest request = createValidRequest();
-
         request.setFlightNumber(" ai202 ");
         request.setSource(" Delhi ");
         request.setDestination(" Mumbai ");
 
-        when(flightRepository.existsByFlightNumber("AI202"))
-                .thenReturn(false);
-
-        when(flightRepository.save(any(Flight.class)))
-                .thenAnswer(invocation -> {
-                    Flight flight = invocation.getArgument(0);
-                    flight.setId(1L);
-                    return flight;
-                });
+        when(flightRepository.save(any(Flight.class))).thenAnswer(invocation -> {
+            Flight flight = invocation.getArgument(0);
+            flight.setId(1L);
+            return flight;
+        });
 
         FlightResponse response = flightService.createFlight(request);
 
         assertEquals("AI202", response.getFlightNumber());
         assertEquals("delhi", response.getSource());
         assertEquals("mumbai", response.getDestination());
+
+        ArgumentCaptor<Flight> savedFlight = ArgumentCaptor.forClass(Flight.class);
+        verify(flightRepository).existsByFlightNumber("AI202");
+        verify(flightRepository).save(savedFlight.capture());
+        assertEquals("AI202", savedFlight.getValue().getFlightNumber());
+        assertEquals("delhi", savedFlight.getValue().getSource());
+        assertEquals("mumbai", savedFlight.getValue().getDestination());
     }
 
     @Test
     void shouldRejectScheduleChangeWhenBookingsExist() {
-
         Flight existingFlight = createExistingFlight();
-
         FlightRequest request = createValidRequest();
+        request.setDeparture(DEPARTURE.plusHours(1));
+        request.setArrival(ARRIVAL.plusHours(1));
 
-        // Change both times while keeping arrival after departure
-        request.setDeparture(
-                existingFlight.getDeparture().plusHours(1)
-        );
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(existingFlight));
 
-        request.setArrival(
-                existingFlight.getArrival().plusHours(1)
-        );
-
-        when(flightRepository.findById(1L))
-                .thenReturn(Optional.of(existingFlight));
-
-        when(flightRepository.existsByFlightNumberAndIdNot("AI202", 1L))
-                .thenReturn(false);
-
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> flightService.updateFlight(1L, request)
-        );
+        assertThrows(IllegalArgumentException.class,
+                () -> flightService.updateFlight(1L, request));
+        verify(flightRepository, never()).save(any(Flight.class));
     }
-
 }

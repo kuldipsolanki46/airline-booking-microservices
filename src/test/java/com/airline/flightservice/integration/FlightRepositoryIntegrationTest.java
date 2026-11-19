@@ -1,16 +1,14 @@
-
 package com.airline.flightservice.integration;
 
 import com.airline.flightservice.entity.Flight;
 import com.airline.flightservice.repository.FlightRepository;
-
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.dao.DataIntegrityViolationException;
-
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -20,124 +18,108 @@ import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+// Keep @SpringBootTest so this remains compatible with the dependencies in your ZIP.
+// Once you confirm spring-boot-starter-data-jpa-test is present, @DataJpaTest is
+// a faster alternative for repository-only tests.
 @SpringBootTest
 @Testcontainers
+@Transactional // Roll back each test, including database constraint tests.
 class FlightRepositoryIntegrationTest {
+
+    private static final LocalDateTime DEPARTURE = LocalDateTime.now().plusDays(3).withNano(0);
+    private static final LocalDateTime ARRIVAL = DEPARTURE.plusHours(2);
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres =
-            new PostgreSQLContainer<>("postgres:16-alpine")
-                    .withDatabaseName("airline_flight_db")
-                    .withUsername("test")
-                    .withPassword("test");
+    static PostgreSQLContainer<?> postgres =   new PostgreSQLContainer<>("postgres:16-alpine")
+                                                        .withDatabaseName("airline_flight_db")
+                                                        .withUsername("test")
+                                                        .withPassword("test");
 
     @Autowired
     private FlightRepository flightRepository;
 
+    @Autowired
+    private EntityManager entityManager;
 
-    // Helper method to create valid flight
     private Flight createFlight(String flightNumber) {
-
         return Flight.builder()
                 .flightNumber(flightNumber)
                 .source("delhi")
                 .destination("mumbai")
-                .departure(LocalDateTime.now().plusDays(2))
-                .arrival(LocalDateTime.now().plusDays(2).plusHours(2))
+                .departure(DEPARTURE)
+                .arrival(ARRIVAL)
                 .totalSeats(100)
                 .availableSeats(100)
                 .price(new BigDecimal("5000.00"))
                 .build();
     }
 
-
-    // 1. Verify unique flight number constraint
     @Test
-    void shouldRejectDuplicateFlightNumber() {
+    void shouldSaveAndReadValidFlight() {
+        Flight saved = flightRepository.saveAndFlush(createFlight("AI999"));
+        assertNotNull(saved.getId());
 
-        flightRepository.saveAndFlush(createFlight("AI202"));
+        // Clear the first-level JPA cache to force retrieval from PostgreSQL.
+        entityManager.clear();
+        Flight loaded = flightRepository.findById(saved.getId()).orElseThrow();
 
-        Flight duplicateFlight = createFlight("AI202");
-
-        assertThrows(
-                DataIntegrityViolationException.class,
-                () -> flightRepository.saveAndFlush(duplicateFlight)
-        );
+        assertEquals("AI999", loaded.getFlightNumber());
+        assertEquals(100, loaded.getTotalSeats());
+        assertEquals(100, loaded.getAvailableSeats());
+        assertEquals(DEPARTURE, loaded.getDeparture());
     }
 
+    @Test
+    void shouldRejectDuplicateFlightNumber() {
+        flightRepository.saveAndFlush(createFlight("AI202"));
 
-    // 2. Verify total seats CHECK constraint
+        assertThrows(DataIntegrityViolationException.class,
+                () -> flightRepository.saveAndFlush(createFlight("AI202")));
+    }
+
     @Test
     void shouldRejectZeroTotalSeats() {
-
         Flight flight = createFlight("AI203");
         flight.setTotalSeats(0);
 
-        assertThrows(
-                DataIntegrityViolationException.class,
-                () -> flightRepository.saveAndFlush(flight)
-        );
+        assertThrows(DataIntegrityViolationException.class,
+                () -> flightRepository.saveAndFlush(flight));
     }
 
-
-    // 3. Verify available seats CHECK constraint
     @Test
     void shouldRejectNegativeAvailableSeats() {
-
         Flight flight = createFlight("AI204");
         flight.setAvailableSeats(-5);
 
-        assertThrows(
-                DataIntegrityViolationException.class,
-                () -> flightRepository.saveAndFlush(flight)
-        );
+        assertThrows(DataIntegrityViolationException.class,
+                () -> flightRepository.saveAndFlush(flight));
     }
 
-
-    // 4. Verify available seats cannot exceed total seats
     @Test
     void shouldRejectAvailableSeatsGreaterThanTotalSeats() {
-
         Flight flight = createFlight("AI205");
-        flight.setTotalSeats(100);
         flight.setAvailableSeats(120);
 
-        assertThrows(
-                DataIntegrityViolationException.class,
-                () -> flightRepository.saveAndFlush(flight)
-        );
+        assertThrows(DataIntegrityViolationException.class,
+                () -> flightRepository.saveAndFlush(flight));
     }
 
-
-    // 5. Verify price CHECK constraint
     @Test
     void shouldRejectZeroPrice() {
-
         Flight flight = createFlight("AI206");
         flight.setPrice(BigDecimal.ZERO);
 
-        assertThrows(
-                DataIntegrityViolationException.class,
-                () -> flightRepository.saveAndFlush(flight)
-        );
+        assertThrows(DataIntegrityViolationException.class,
+                () -> flightRepository.saveAndFlush(flight));
     }
 
-
-    // 6. Verify arrival must be after departure
     @Test
     void shouldRejectInvalidFlightSchedule() {
-
         Flight flight = createFlight("AI207");
+        flight.setArrival(DEPARTURE.minusHours(1));
 
-        flight.setArrival(
-                flight.getDeparture().minusHours(1)
-        );
-
-        assertThrows(
-                DataIntegrityViolationException.class,
-                () -> flightRepository.saveAndFlush(flight)
-        );
+        assertThrows(DataIntegrityViolationException.class,
+                () -> flightRepository.saveAndFlush(flight));
     }
-
 }
